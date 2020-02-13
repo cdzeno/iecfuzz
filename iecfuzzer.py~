@@ -1,0 +1,141 @@
+#!/usr/bin/python3
+from boofuzz import *
+import argparse
+import binascii
+import logging
+import socket
+import sys
+
+TESTFR = [
+        # iec 104 apci layer
+        0x68, # start
+        0x04, # APDU len
+        0x43, # type 0100 0011
+        0x00, 0x00, 0x00  # padding        
+]
+
+STARTDT = [
+        # iec 104 apci layer
+        0x68, # start
+        0x04, # APDU len
+        0x07, # type 0000 0111
+        0x00, 0x00, 0x00 # padding 
+
+]
+
+C_IC_NA_1_broadcast = [
+
+        # iec 104 apci layer
+        0x68, # start
+        0x0e, # apdu len
+        0x00, 0x00, # type + tx
+        0x00, 0x00, # rx 
+
+        # iec 104 asdu layer
+        0x64, # type id: C_IC_NA_1, interrogation command
+        0x01, # numix
+        0x06, # some stuff
+        0x00, # OA 
+        0xff, 0xff, # addr 65535
+        0x00, # IOA 
+        0x00, 0x00, 0x00 # 0x14 
+
+]
+
+IEC_APCI = {
+	"680443000000": "TESTFR-ACT",
+	"680483000000": "TESTFR-CON",
+	"680407000000": "STARTDT-ACT",
+	"68040b000000": "STARTDT-CON"
+}
+
+def isServiceExposed(host, port):
+	logging.info("Searching IEC104 service on %s:%s" % (host, port))
+	
+	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+		try:
+			s.settimeout(3.0)
+			s.connect((host, int(port)))
+			return True
+		except socket.error:
+			return False
+
+def sendIECPacket(iec_packet, sock, host, port):
+	
+	payload = "".join(map(chr, iec_packet))
+	enc_payload = binascii.hexlify(bytes(payload, 'UTF-8'))
+	enc_payload_str = enc_payload.decode('UTF-8')
+	payload_msg = IEC_APCI[enc_payload_str]
+	
+	logging.info("IEC104 payload: `%s` -> %s" % (enc_payload, payload_msg))
+				 
+	sock.send(bytes(payload, 'UTF-8'))
+
+	#TODO: Fix windows size
+	resp = sock.recv(1024)
+	dec_resp = binascii.hexlify(resp)
+
+	if resp:
+		logging.info("IEC104 response: `%s`" % dec_resp.decode('UTF-8'))
+		if dec_resp.decode('UTF-8') == "680483000000":
+			return True
+		else:
+			return False
+	else:
+		logging.warning("IEC104 empty response")
+		return False
+
+def fuzzSTARTDT(s, host, port):
+	logging.info("Fuzzing STARTDT packet")
+	sendIECPacket(STARTDT, s, host, port)
+
+def startFuzzer(host, port):
+	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+		try:
+			s.connect((host, int(port)))
+			statusIEC = sendIECPacket(TESTFR, s, host, port)
+
+			if statusIEC:
+				print ("=================================")
+				logging.info("Starting IEC104 Fuzzing")
+				fuzzSTARTDT(s, host, port)
+				return True
+			else:
+				return False
+		except socket.error:
+			logging.warn("Occurred TCP socket error during fuzzing")
+			return False
+		
+def main():
+	parser = argparse.ArgumentParser(description="IEC104 Fuzzer")
+	parser.add_argument("--host", action="store", dest="host",
+						type=str,required=True,
+						help="IEC104 target host to fuzz"
+	)
+	parser.add_argument("--port", action="store", dest="port",
+						type=str,required=True,
+						help="IEC104 service port"
+	)
+
+	args = parser.parse_args()
+	host = args.host
+	port = args.port
+
+	if isServiceExposed(host, port):
+		logging.info("IEC104 service found active on %s:%s" % (host,port))
+		ret = startFuzzer(host,port)
+		
+		if ret == False:
+			logging.info("An error occured during IEC104 Fuzzing")
+	else:
+		logging.warn("IEC104 service is not exposed by %s on %s port" % (host,port))
+		logging.info("Stopping IEC104 fuzzing on %s:%s" % (host,port))
+
+	logging.info("IEC104 Fuzzing is finished... bye")
+	sys.exit(0)
+		
+if __name__ == "__main__":
+	logging.basicConfig(level=logging.DEBUG,
+						format='%(asctime)s - %(message)s',
+						datefmt='%d-%b-%y %H:%M:%S')
+	main()
