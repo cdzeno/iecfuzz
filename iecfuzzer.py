@@ -60,37 +60,6 @@ def isServiceExposed(host, port):
 		except socket.error:
 			return False
 
-def sendIECPacket(IECPacket, sock):
-	
-	payload = "".join(map(chr, IECPacket))
-	enc_payload = binascii.hexlify(bytes(payload, 'UTF-8'))
-	enc_payload_str = enc_payload.decode('UTF-8')
-	payload_msg = IEC_APCI[enc_payload_str]
-	
-	logging.debug("IEC104 payload: `%s` -> %s" % (enc_payload_str, payload_msg))
-	sock.send(bytes(payload, 'UTF-8'))
-
-	#TODO: Fix windows size
-	resp = sock.recv(1024)
-	dec_resp = binascii.hexlify(resp)
-	dec_resp_str = dec_resp.decode("UTF-8")
-	response_msg = IEC_APCI[dec_resp_str]
-	
-	if resp:
-		logging.debug("IEC104 response: `%s` -> %s" % (dec_resp_str, response_msg))
-		return (True, dec_resp_str)
-	else:
-		logging.debug("IEC104 empty response")
-		return (False, "")
-
-# def monitorIEC(sock):
-# 	ret, resp = sendIECPacket(TESTFR, sock)
-	
-# 	if ret and (resp == "680483000000"):
-# 		return True
-# 	else:
-# 		return False
-
 def IECBooFuzz(host, port):
 	session = Session(
 		target=Target(
@@ -110,35 +79,56 @@ def IECBooFuzz(host, port):
 	if s_block_start("iec_apcii"):
 		s_byte(0x68, name="start",fuzzable=False)
 		s_byte(0x04, name="apdu_length", fuzzable=False)
-		# s_dword(0x070000, name="type", fuzzable=False)
-		s_static("\x07\x00\x00")
+		# s_dword(0x07000000, name="type", fuzzable=False)
+		s_static("\x07\x00\x00\x00")
 	s_block_end("iec_apci")	
 
 	s_initialize("iec_apci_empty")
 	if s_block_start("iec_apci"):
 		s_byte(0x68, name="start",fuzzable=False)
 		s_byte(0x04, name="apdu_length", fuzzable=False)
-		# s_dword(0x010000, name="type", fuzzable=False)
-		s_static("\x01\x00\x00")
+		# s_dword(0x01000000, name="type", fuzzable=False)
+		s_static("\x01\x00\x00\x00")
 	s_block_end("iec_apci")	
 
 	s_initialize("iec_clock_sync")
 	if s_block_start("iec_apci"):
 		s_byte(0x68, name="start",fuzzable=False)
-		s_byte(0x14, name="apdu_length", fuzzable=False)
+		s_byte(0x14, name="apdu_length", fuzzable=True)
 		s_dword(0x000000, name="type", fuzzable=False)
 		if s_block_start("iec_asdu"):
-			s_byte(0x67, name="type_id",fuzzable=False)
+			s_byte(0x67, name="type_id",fuzzable=False)   # C_CS_NA_1 Act
 			s_byte(0x01, name="sq_plus_no",fuzzable=True) # A-BBBBBBB (1-7 bit)
-			s_byte(0x67, name="cot",fuzzable=True)        # T-P/N-COT (1-1-6 bit)
-			s_byte(0x67, name="org",fuzzable=False)       # Originator Address
-			s_word(0xff, name="com",fuzzable=True)        # Common Address of ASDU
-			if s_block_start("iec_io"):                   # Information Object
+			s_byte(0x06, name="cot",fuzzable=True)        # T-P/N-COT (1-1-6 bit)
+			s_byte(0x00, name="org",fuzzable=False)       # Originator Address
+			s_word(0xffff, name="com",fuzzable=True)      # Common Address of ASDU
+			if s_block_start("iec_ioa"):                  # Information Object
 				s_byte(0x67, name="ioa_1",fuzzable=True)  # IOA: 3-byte length
 				s_byte(0x67, name="ioa_2",fuzzable=True)
 				s_byte(0x67, name="ioa_3",fuzzable=True)
 				s_static("\xee\xd8\x09\x0c\x0c\x02\x14")  # Fixed CP56Time: Feb 12, 2020
-			s_block_end("iec_io")
+			s_block_end("iec_ioa")
+		s_block_end("iec_asdu")
+	s_block_end("iec_apci")
+
+	s_initialize("iec_inter_command")
+	if s_block_start("iec_apci"):
+		s_byte(0x68, name="start",fuzzable=False)
+		s_byte(0x0e, name="apdu_length", fuzzable=True)
+		# s_dword(0x02000000, name="type", fuzzable=False)
+		s_static("\x02\x00\x00\x00")
+		if s_block_start("iec_asdu"):
+			s_byte(0x64, name="type_id",fuzzable=False)   # C_IC_NA_1 Act
+			s_byte(0x01, name="sq_plus_no",fuzzable=True) # A-BBBBBBB (1-7 bit)
+			s_byte(0x06, name="cot",fuzzable=True)
+			s_byte(0x00, name="org",fuzzable=False)
+			s_word(0xffff, name="com",fuzzable=True)
+			if s_block_start("iec_ioa"):
+				s_byte(0x00, name="ioa_1",fuzzable=True)  # IOA: 3-byte length
+				s_byte(0x00, name="ioa_2",fuzzable=True)
+				s_byte(0x00, name="ioa_3",fuzzable=True)
+				s_byte(0x14, name="qoi",fuzzable=True)
+			s_block_end("iec_ioa")
 		s_block_end("iec_asdu")
 	s_block_end("iec_apci")	
 
@@ -156,25 +146,10 @@ def IECBooFuzz(host, port):
 	session.connect(s_get('iec_startdt'))
 	session.connect(s_get('iec_startdt'), s_get("iec_apci_empty"))
 	session.connect(s_get("iec_apci_empty"), s_get("iec_clock_sync"))
+	session.connect(s_get("iec_apci_empty"), s_get("iec_inter_command"))
+	session.connect(s_get("iec_clock_sync"), s_get("iec_inter_command"))
 	session.fuzz()
 
-# def startFuzzer(host, port):
-# 	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-# 		try:
-# 			print ("=================================")
-# 			logging.info("Starting IEC104 Fuzzing")
-# 			s.connect((host, int(port)))
-		
-# 			if monitorIEC(s):
-# 				IECBooFuzz(host,port)
-# 				return True
-# 			else:
-# 				return False
-				
-# 		except socket.error:
-# 			logging.warn("Occurred TCP socket error during fuzzing")
-# 			return False
-		
 def main():
 	parser = argparse.ArgumentParser(description="IEC104 Fuzzer")
 	parser.add_argument("--host", action="store", dest="host",
