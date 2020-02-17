@@ -69,8 +69,8 @@ def IECBooFuzz(host, port):
 		receive_data_after_fuzz=True
 	)
 
-	# STARTDT:
-	# 0x68, -> start
+    # STARTDT:
+    # 0x68, -> start
     # 0x04, -> APDU len
     # 0x07, -> type 0000 0111
     # 0x00, 0x00, 0x00 -> padding
@@ -144,11 +144,15 @@ def IECBooFuzz(host, port):
 	# C_IC_NA_1 ActCon <-
 	
 	session.connect(s_get('iec_startdt'))
-	session.connect(s_get('iec_startdt'), s_get("iec_apci_empty"))
-	session.connect(s_get("iec_apci_empty"), s_get("iec_clock_sync"))
-	session.connect(s_get("iec_apci_empty"), s_get("iec_inter_command"))
+	session.connect(s_get('iec_startdt'), s_get("iec_clock_sync"))
 	session.connect(s_get("iec_clock_sync"), s_get("iec_inter_command"))
 	session.fuzz()
+	# session.connect(s_get('iec_startdt'), s_get("iec_apci_empty"))
+	# session.connect(s_get("iec_apci_empty"), s_get("iec_clock_sync"))
+	# session.connect(s_get("iec_apci_empty"), s_get("iec_inter_command"))
+	# session.connect(s_get("iec_clock_sync"), s_get("iec_inter_command"))
+	# session.fuzz()
+
 
 def main():
 	parser = argparse.ArgumentParser(description="IEC104 Fuzzer")
